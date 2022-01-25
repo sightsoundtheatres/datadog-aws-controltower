@@ -61,6 +61,7 @@ Parameters:
     Default: datadoghq.com
     Description: Define your Datadog Site to send data to. For the Datadog EU site, set to datadoghq.eu
     AllowedPattern: .+
+    
     ConstraintDescription: DdSite is required
   IAMRoleName:
     Description: Customize the name of IAM role for Datadog AWS integration
@@ -100,7 +101,29 @@ Parameters:
     Description: >-
       The Datadog Forwarder Lambda function name. DO NOT change when updating an existing CloudFormation stack,
       otherwise the current forwarder function will be replaced and all the triggers will be lost.
-
+  ExcludedRegions:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: >-
+      By default, Datadog will try to use all AWS regions for metrics. If this is not desired, list the regions
+      that should not be used.
+  ResourceCollectionEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - true
+      - false
+    Description: >-
+      By default, Datadog does not collect resources. If this is desired, change this to true.
+  CSPMResourceCollectionEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - true
+      - false
+    Description: >-
+      By default, Datadog does not have enough permissions to collect resources for Cloud Security Posture Management.
+      To grant these permissions and enable CSPM, change this to true.
 
 
 Resources:
@@ -141,7 +164,13 @@ Resources:
           - Ref: DdAWSAccountId
           - '","DdForwarderName": "'
           - Ref: DdForwarderName
-          - '"}'
+          - '","ExcludedRegions": '
+          - Ref: ExcludedRegions
+          - ',"ResourceCollectionEnabled": '
+          - Ref: ResourceCollectionEnabled
+          - ',"CSPMResourceCollectionEnabled": '
+          - Ref: CSPMResourceCollectionEnabled
+          - '}'
   
   CreateDatadogStackSet:
     Type: 'Custom::DatadogStackSet'
@@ -432,18 +461,24 @@ Resources:
                       output = secretsmanager.get_secret_value(SecretId=key)['SecretString']
               return(output)
 
-          def get_datadog_external_id(accountid):
+          def create_datadog_integration(accountid):
               
               secretList = json.loads(get_secret_value('DatadogSecretString1'))
               api_key=""
               application_key=""
               role_name=""
               dd_site=""
+              excluded_regions=[]
+              resource_collection_enabled=False
+              cspm_resource_collection_enabled=False
 
               api_key_key='DdApiKey'
               application_key_key='DatadogApplicationKey'
               role_name_key='IAMRoleName'
               dd_site_key= 'DdSite'
+              excluded_regions_key='ExcludedRegions'
+              resource_collection_enabled_key='ResourceCollectionEnabled'
+              cspm_resource_collection_enabled_key='CSPMResourceCollectionEnabled'
               
               if api_key_key in secretList:
                   api_key = secretList[api_key_key]
@@ -453,6 +488,12 @@ Resources:
                   role_name = secretList[role_name_key]
               if dd_site_key in secretList:
                   dd_site = secretList[dd_site_key]
+              if excluded_regions_key in secretList:
+                  excluded_regions = secretList[excluded_regions_key]
+              if resource_collection_enabled_key in secretList:
+                  resource_collection_enabled = secretList[resource_collection_enabled_key]
+              if cspm_resource_collection_enabled_key in secretList:
+                  cspm_resource_collection_enabled = secretList[cspm_resource_collection_enabled_key]
               
               account_id = accountid
 
@@ -460,7 +501,10 @@ Resources:
 
               payload = {
                     'account_id': account_id,
-                    'role_name': role_name
+                    'role_name': role_name,
+                    'excluded_regions': excluded_regions,
+                    'resource_collection_enabled': resource_collection_enabled,
+                    'cspm_resource_collection_enabled': cspm_resource_collection_enabled
               }
               data_json=json.dumps(payload)
               req = urllib.request.Request(url = datadogPOSTUrl, data = bytes(data_json.encode("utf-8")), method = "POST")
@@ -468,7 +512,7 @@ Resources:
               with urllib.request.urlopen(req) as resp:
                 response_data = json.loads(resp.read().decode("utf-8"))
                 print(response_data)
-              output = response_data['external_id']
+              output = (response_data['external_id'], cspm_resource_collection_enabled)
               return output
 
           def lambda_handler(event, context):
@@ -491,12 +535,15 @@ Resources:
                       cloudformation = boto3.client('cloudformation')
                       for item in stackset_list:
                           try:
-                              external_id = get_datadog_external_id(accountid=accId)  
+                              external_id, cspmPermissions = create_datadog_integration(accountid=accId)  
                               datadog_overrideparamList = []
-                              keyDict = {}
-                              keyDict['ParameterKey'] = 'ExternalId'
-                              keyDict['ParameterValue'] = external_id
-                              datadog_overrideparamList.append(keyDict)
+                              externalIdKeyDict = {}
+                              externalIdKeyDict['ParameterKey'] = 'ExternalId'
+                              externalIdKeyDict['ParameterValue'] = external_id
+                              cspmKeyDict = {}
+                              cspmKeyDict['ParameterKey'] = 'CloudSecurityPostureManagementPermissions'
+                              cspmKeyDict['ParameterValue'] = cspmPermissions
+                              datadog_overrideparamList.extend([externalIdKeyDict, cspmKeyDict])
                               result = cloudformation.create_stack_instances(StackSetName=item, ParameterOverrides=datadog_overrideparamList,Accounts=[accId], Regions=[regionName])
                               logger.info('Processed {} Sucessfully'.format(item))
                           except Exception as e:
