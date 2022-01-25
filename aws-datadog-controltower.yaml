@@ -102,14 +102,14 @@ Parameters:
       The Datadog Forwarder Lambda function name. DO NOT change when updating an existing CloudFormation stack,
       otherwise the current forwarder function will be replaced and all the triggers will be lost.
   ExcludedRegions:
-    Type: CommaDelimitedList
-    Default: ''
+    Type: String
+    Default: '[]'
     Description: >-
       By default, Datadog will try to use all AWS regions for metrics. If this is not desired, list the regions
-      that should not be used.
+      that should not be used. This must be in JSON string array format.
   ResourceCollectionEnabled:
     Type: String
-    Default: 'false'
+    Default: false
     AllowedValues:
       - true
       - false
@@ -117,7 +117,7 @@ Parameters:
       By default, Datadog does not collect resources. If this is desired, change this to true.
   CSPMResourceCollectionEnabled:
     Type: String
-    Default: 'false'
+    Default: false
     AllowedValues:
       - true
       - false
@@ -142,35 +142,22 @@ Resources:
       Description: Datadog Parameters required for Datadog Pro
       Name: DatadogSecretString1
       SecretString:
-        Fn::Join:
-        - ''
-        - - '{"ExternalId":"'
-          - Ref: ExternalId
-          - '","DdApiKey": "'
-          - Ref: DdApiKey
-          - '","DatadogApplicationKey": "'
-          - Ref: DatadogApplicationKey
-          - '","DdSite": "'
-          - Ref: DdSite
-          - '","BasePermissions": "'
-          - Ref: Permissions
-          - '","IAMRoleName": "'
-          - Ref: IAMRoleName
-          - '","LogArchives": "'
-          - Ref: LogArchives
-          - '","CloudTrails": "'
-          - Ref: CloudTrails
-          - '","DdAWSAccountId": "'
-          - Ref: DdAWSAccountId
-          - '","DdForwarderName": "'
-          - Ref: DdForwarderName
-          - '","ExcludedRegions": '
-          - Ref: ExcludedRegions
-          - ',"ResourceCollectionEnabled": '
-          - Ref: ResourceCollectionEnabled
-          - ',"CSPMResourceCollectionEnabled": '
-          - Ref: CSPMResourceCollectionEnabled
-          - '}'
+        Fn::Sub: >-
+          {
+            "ExternalId": "${ExternalId}",
+            "DdApiKey": "${DdApiKey}",
+            "DatadogApplicationKey": "${DatadogApplicationKey}",
+            "DdSite": "${DdSite}",
+            "BasePermissions": "${Permissions}",
+            "IAMRoleName": "${IAMRoleName}",
+            "LogArchives": "${LogArchives}",
+            "CloudTrails": "${CloudTrails}",
+            "DdAWSAccountId": "${DdAWSAccountId}",
+            "DdForwarderName": "${DdForwarderName}",
+            "ExcludedRegions": ${ExcludedRegions},
+            "ResourceCollectionEnabled": ${ResourceCollectionEnabled},
+            "CSPMResourceCollectionEnabled": ${CSPMResourceCollectionEnabled}
+          }'
   
   CreateDatadogStackSet:
     Type: 'Custom::DatadogStackSet'
@@ -542,7 +529,7 @@ Resources:
                               externalIdKeyDict['ParameterValue'] = external_id
                               cspmKeyDict = {}
                               cspmKeyDict['ParameterKey'] = 'CloudSecurityPostureManagementPermissions'
-                              cspmKeyDict['ParameterValue'] = cspmPermissions
+                              cspmKeyDict['ParameterValue'] = str(cspmPermissions).lower()
                               datadog_overrideparamList.extend([externalIdKeyDict, cspmKeyDict])
                               result = cloudformation.create_stack_instances(StackSetName=item, ParameterOverrides=datadog_overrideparamList,Accounts=[accId], Regions=[regionName])
                               logger.info('Processed {} Sucessfully'.format(item))
